@@ -144,6 +144,15 @@ const config: Config = {
       darkTheme: prismThemes.dracula,
       additionalLanguages: ['java', 'docker', 'graphql'],
     },
+    plugins: [
+      [
+        '@docusaurus/plugin-google-gtag',
+        {
+          trackingID: 'G-G88VZZ3JJ7', // 🔁 replace with your actual ID
+          anonymizeIP: true, // optional
+        },
+      ],
+    ],
   } satisfies Preset.ThemeConfig,
 };
 
