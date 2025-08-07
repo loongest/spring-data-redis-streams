@@ -3,29 +3,19 @@ sidebar_position: 15
 ---
 
 # Deploy your site
+GitHub Pages picks up deploy-ready files (output from docusaurus build) from 
+    * master/main branch or
+    * gh-pags branch
 
-Docusaurus is a **static-site-generator** (also called **[Jamstack](https://jamstack.org/)**).
 
-It builds your site as simple **static HTML, JavaScript and CSS files**.
-
-## Build your site
-
-Build your site **for production**:
-
-```bash
-npm run build
+## Command deployment    
+This command helps you deploy your site from the source branch to the deployment branch in one command: clone, build, and commit
+```
+docusaurus deploy
 ```
 
-The static files are generated in the `build` folder.
-
-## Deploy your site
-
-Test your production build locally:
-
-```bash
-npm run serve
-```
-
-The `build` folder is now served at [http://localhost:3000/](http://localhost:3000/).
-
-You can now deploy the `build` folder **almost anywhere** easily, **for free** or very small cost (read the **[Deployment Guide](https://docusaurus.io/docs/deployment)**).
+## Configure Github Setting
+1. From the github repository, select Settings, default branch, leave it as `main`
+2. Click `Environments` from the left menu, click New `Environment` give it a name eg: __github-pages__.
+3. Under __Deployment branches and tags__ section:
+    * 
