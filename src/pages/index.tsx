@@ -12,6 +12,15 @@ function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
+       <script async src="https://www.googletagmanager.com/gtag/js?id=G-G88VZZ3JJ7"></script>
+        <script>
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-G88VZZ3JJ7');
+          `}
+      </script>
       <div className="container">
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
