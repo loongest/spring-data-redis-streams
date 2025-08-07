@@ -620,9 +620,10 @@ Executors.newSingleThreadExecutor().submit(() -> {
 ```
 Example:
 ```java
+@Slf4j
 @Component
 @RequiredArgsConstructor
-public class RedisStreamConsumer {
+public class RaceStreamConsumer {
 
     private final StringRedisTemplate redisTemplate;
     private final RaceStreamRepository repository;
@@ -634,15 +635,36 @@ public class RedisStreamConsumer {
     private static final String GROUP_NAME = "race-group";
     private static final String CONSUMER_NAME = "consumer-B";
 
+    @PostConstruct
+    public void init() {
+        createGroupIfNotExists();
+    }
+
+    /*
+     *   XGROUP CREATE race:france race-group 0 MKSTREAM
+     */
+    private void createGroupIfNotExists() {
+        try {
+            redisTemplate.opsForStream().createGroup(STREAM_KEY, ReadOffset.from("0"), GROUP_NAME);
+            log.info("✅ Created group '{}' on stream '{}'", GROUP_NAME, STREAM_KEY);
+        } catch (RedisSystemException e) {
+            if (e.getCause() instanceof RedisBusyException) {
+                log.info("ℹ️ Group '{}' already exists, skipping creation", GROUP_NAME);
+            } else {
+                throw e;
+            }
+        }
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void startConsumerThread() {
         executor.submit(() -> {
             while (running) {
                 try {
                     List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-                        Consumer.from(GROUP_NAME, CONSUMER_NAME),
-                        StreamReadOptions.empty().block(Duration.ofSeconds(30)).count(10),
-                        StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
+                            Consumer.from(GROUP_NAME, CONSUMER_NAME),
+                            StreamReadOptions.empty().block(Duration.ofSeconds(30)).count(10),
+                            StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
                     );
 
                     if (records == null || records.isEmpty()) {
@@ -693,7 +715,6 @@ public class RedisStreamConsumer {
                 .build();
     }
 }
-
 ```
 
 ## Additional Information on BLOCK
