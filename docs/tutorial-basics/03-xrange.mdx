@@ -1,0 +1,575 @@
+---
+sidebar_position: 3
+---
+
+# XRANGE
+The `XRANGE` command is used to navigate Redis Stream entries in chronological order — from the **oldest** to the **newest**.
+
+In a previous example, we demonstrated how to use `XRANGE` to list all stream entries from beginning to end. In this section, we’ll go deeper by exploring **pagination** techniques using `XRANGE`.
+
+
+```
+XRANGE [key]  [start]  [end]  COUNT  [count]
+```
+
+__Special markers:__
+
+* `-` (dash) = lowest ID (beginning of stream)
+* `+` (plus) = highest ID (end of stream)
+
+```
+XRANGE race:france -  +
+```
+
+# Prepare Sample Data
+To test pagination with `XRANGE`, we'll generate sample data in Redis using a Lua script. Once complete, we’ll move on to implementing it in Java.
+
+1. __Save this to a file: generate_race.lua__
+```lua
+
+-- KEYS[1] = stream name
+-- ARGV[1] = number of records to generate
+
+local stream = KEYS[1]
+local count = tonumber(ARGV[1])
+
+-- List of rider names to choose from
+local riders = { "Castilla", "Lopez", "Moreira", "Fernandez", "Van Aert", "Pogacar", "Roglic", "Evenepoel", "Thomas", "Vingegaard" }
+
+math.randomseed(redis.call('TIME')[2])  -- Seed with high-res time (microseconds)
+
+for i = 1, count do
+    local rider = riders[math.random(1, #riders)]
+    local speed = string.format("%.1f", 20 + math.random() * 20)
+    local location_id = tostring(math.random(1, 5))
+    local position = tostring(i)
+
+    redis.call('XADD', stream, '*',
+        'rider', rider,
+        'speed', speed,
+        'position', position,
+        'location_id', location_id
+    )
+end
+
+return count
+```
+
+2. __Run it via redis-cli__
+```
+redis-cli --eval generate_race.lua race:france , 50
+```
+You should see:
+```
+(integer) 50
+```
+__This will add 50 entries to the stream race:france, with:__
+* Random rider names (from a preset list)
+* Random speed (20.0–40.0)
+* Random location_id (1–5)
+* Auto-incrementing position (1 to 50)
+
+3. __Check the results__
+```
+redis-cli XRANGE race:france - +
+
+1) 1) "1754326272465-0"
+    2) 1) "rider"
+       2) "Lopez"
+       3) "speed"
+       4) "31.5"
+       5) "position"
+       6) "1"
+       7) "location_id"
+       8) "1"
+...
+49) 1) "1754326272465-48"
+    2) 1) "rider"
+       2) "Fernandez"
+       3) "speed"
+       4) "22.5"
+       5) "position"
+       6) "49"
+       7) "location_id"
+       8) "5"
+50) 1) "1754326272465-49"
+    2) 1) "rider"
+       2) "Roglic"
+       3) "speed"
+       4) "20.3"
+       5) "position"
+       6) "50"
+       7) "location_id"
+       8) "3"       
+```
+
+
+# Fetch Data in Chunk (Pagination)
+
+To paginate using `XRANGE`, you can use the COUNT argument to limit results and use the last returned ID as a starting point for the next query.
+
+__Example: Fetch 5 entries at a time__
+```
+XRANGE race:france 0 + COUNT 5
+```
+
+:bulb: __Note:__ 0 is equivalent to 0-1, meaning "start from the very beginning".
+
+### First page (COUNT 5):
+
+```
+1) 1) "1754326272465-0"
+   2) 1) "rider"
+      2) "Lopez"
+      3) "speed"
+      4) "31.5"
+      5) "position"
+      6) "1"
+      7) "location_id"
+      8) "1"
+2) 1) "1754326272465-1"
+   2) 1) "rider"
+      2) "Castilla"
+      3) "speed"
+      4) "23.0"
+      5) "position"
+      6) "2"
+      7) "location_id"
+      8) "3"
+3) 1) "1754326272465-2"
+   2) 1) "rider"
+      2) "Van Aert"
+      3) "speed"
+      4) "38.6"
+      5) "position"
+      6) "3"
+      7) "location_id"
+      8) "3"
+4) 1) "1754326272465-3"
+   2) 1) "rider"
+      2) "Van Aert"
+      3) "speed"
+      4) "23.3"
+      5) "position"
+      6) "4"
+      7) "location_id"
+      8) "3"
+5) 1) "1754326272465-4"  <---- first paging result end here
+   2) 1) "rider"
+      2) "Moreira"
+      3) "speed"
+      4) "37.4"
+      5) "position"
+      6) "5"
+      7) "location_id"
+      8) "3"
+
+```
+
+To get the next page, use the last ID __(1754326272465-4)__ and increment the sequence part by 1 → __"1754326272465-5"__.
+
+```
+> XRANGE numbers 1754326272465-5 + COUNT 5
+```
+
+Even if __"1754326272465-5"__ doesn’t exactly exist, Redis will return the next available ID after it.
+
+### Second page (COUNT 5):
+
+```
+1) 1) "1754326272465-5"
+   2) 1) "rider"
+      2) "Thomas"
+      3) "speed"
+      4) "20.9"
+      5) "position"
+      6) "6"
+      7) "location_id"
+      8) "2"
+2) 1) "1754326272465-6"
+   2) 1) "rider"
+      2) "Lopez"
+      3) "speed"
+      4) "26.3"
+      5) "position"
+      6) "7"
+      7) "location_id"
+      8) "5"
+3) 1) "1754326272465-7"
+   2) 1) "rider"
+      2) "Moreira"
+      3) "speed"
+      4) "29.8"
+      5) "position"
+      6) "8"
+      7) "location_id"
+      8) "4"
+4) 1) "1754326272465-8"
+   2) 1) "rider"
+      2) "Roglic"
+      3) "speed"
+      4) "36.3"
+      5) "position"
+      6) "9"
+      7) "location_id"
+      8) "3"
+5) 1) "1754326272465-9"
+   2) 1) "rider"
+      2) "Roglic"
+      3) "speed"
+      4) "33.2"
+      5) "position"
+      6) "10"
+      7) "location_id"
+      8) "2"
+```
+
+Repeat this process to paginate through the entire stream.
+
+## Spring Data Redis
+Create spring boot project with following commands
+```
+spring init -d=web,data-redis,devtools,thymeleaf,lombok \
+  -g com.example \
+  -a demo \
+  -p jar \
+  --build maven \
+  xrange -x
+```
+
+add the following to application.yaml
+```
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+```
+
+from the DemoApplication.java
+```java
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.core.StreamOperations;
+import org.springframework.data.redis.connection.Limit;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@SpringBootApplication
+public class DemoApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(DemoApplication.class, args);
+	}
+
+}
+
+@RestController
+@RequestMapping("/api/race")
+@RequiredArgsConstructor
+class PagingRaceStreamController {
+
+	private final StringRedisTemplate redisTemplate;
+
+	@GetMapping("/paginate")
+	public List<MapRecord<String, Object, Object>> paginateStream(
+			@RequestParam(defaultValue = "race:france") String streamKey,
+			@RequestParam(defaultValue = "0") String startId,
+			@RequestParam(defaultValue = "+") String endId,
+			@RequestParam(defaultValue = "5") int count
+	) {
+		StreamOperations<String, Object, Object> streamOperations = redisTemplate.opsForStream();
+		Range<String> range = Range.closed(startId, endId);
+		return streamOperations.range(streamKey, range, Limit.limit().count(count));
+	}
+
+}
+```
+
+## Using XRANGE with StreamOperations
+You typically interact with Redis Streams through the StreamOperations interface, which can be accessed via RedisTemplate.opsForStream().
+* The XRANGE command requires a start and end stream ID. In Spring Data Redis, you represent this range using the __org.springframework.data.redis.connection.stream.Range__ class.
+* You can create a closed range (inclusive of both start and end IDs) using __Range.closed(startId, endId)__.
+* For unbounded ranges (e.g., from the beginning of the stream to a specific ID, or from a specific ID to the end), you can use __Range.unbounded()__ or specify __StreamOffset.fromStart()__ or __StreamOffset.fromEnd()__.
+
+* Optionally to use __Range.open(startId, endId)__ means the starting ID is excluded, so it's perfect for paging from "last seen + 1". <mark>You do not need to increment the ID.</mark> Because Range.open(startId, ...) will skip the startId, and start from the next available one (if exists).
+
+* Spring Boot with Lettuce automatically manages connections — no need to close or release manually.
+* You can build a pagination service layer to encapsulate this logic if needed.
+
+### Example: curl to fetch first page (first 5 entries)
+
+Assume your app is running locally at http://localhost:8080, and your endpoint is:
+```
+$ curl "http://localhost:8080/api/race/paginate?streamKey=race:france&startId=0&count=5" | jq
+
+[
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Lopez",
+      "speed": "31.5",
+      "position": "1",
+      "location_id": "1"
+    },
+    "id": {
+      "value": "1754326272465-0",
+      "timestamp": 1754326272465,
+      "sequence": 0
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Castilla",
+      "speed": "23.0",
+      "position": "2",
+      "location_id": "3"
+    },
+    "id": {
+      "value": "1754326272465-1",
+      "timestamp": 1754326272465,
+      "sequence": 1
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Van Aert",
+      "speed": "38.6",
+      "position": "3",
+      "location_id": "3"
+    },
+    "id": {
+      "value": "1754326272465-2",
+      "timestamp": 1754326272465,
+      "sequence": 2
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Van Aert",
+      "speed": "23.3",
+      "position": "4",
+      "location_id": "3"
+    },
+    "id": {
+      "value": "1754326272465-3",
+      "timestamp": 1754326272465,
+      "sequence": 3
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Moreira",
+      "speed": "37.4",
+      "position": "5",
+      "location_id": "3"
+    },
+    "id": {
+      "value": "1754326272465-4",
+      "timestamp": 1754326272465,
+      "sequence": 4
+    },
+    "requiredStream": "race:france"
+  }
+]
+```
+
+## Example: fetch next page (use last ID + 1)
+If your previous page ended with
+```
+"id": "1754326272465-4"
+```
+Then the next request should be __(if using Range.close)__:
+```
+curl "http://localhost:8080/api/race/paginate?streamKey=race:france&startId=1754326272465-5&count=5" | jq
+```
+or next request should be direct __(if using Range.open)__: last entry id without increment
+```
+curl "http://localhost:8080/api/race/paginate?streamKey=race:france&startId=1754326272465-4&count=5" | jq
+```
+
+
+in result
+```
+[
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Thomas",
+      "speed": "20.9",
+      "position": "6",
+      "location_id": "2"
+    },
+    "id": {
+      "value": "1754326272465-5",
+      "timestamp": 1754326272465,
+      "sequence": 5
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Lopez",
+      "speed": "26.3",
+      "position": "7",
+      "location_id": "5"
+    },
+    "id": {
+      "value": "1754326272465-6",
+      "timestamp": 1754326272465,
+      "sequence": 6
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Moreira",
+      "speed": "29.8",
+      "position": "8",
+      "location_id": "4"
+    },
+    "id": {
+      "value": "1754326272465-7",
+      "timestamp": 1754326272465,
+      "sequence": 7
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Roglic",
+      "speed": "36.3",
+      "position": "9",
+      "location_id": "3"
+    },
+    "id": {
+      "value": "1754326272465-8",
+      "timestamp": 1754326272465,
+      "sequence": 8
+    },
+    "requiredStream": "race:france"
+  },
+  {
+    "stream": "race:france",
+    "value": {
+      "rider": "Roglic",
+      "speed": "33.2",
+      "position": "10",
+      "location_id": "2"
+    },
+    "id": {
+      "value": "1754326272465-9",
+      "timestamp": 1754326272465,
+      "sequence": 9
+    },
+    "requiredStream": "race:france"
+  }
+]
+```
+
+
+:::info
+Redis CLI itself doesn't have a direct equivalent of Range.open(...) from Spring Data Redis, because Redis commands like XRANGE and XREVRANGE always include both start and end IDs — i.e., they behave like Range.closed(...).
+:::
+
+
+## Read single message
+`XRange` is very friendly to read on particular message, like example given the following command you'll get what you expect.
+```
+127.0.0.1:6379> XRANGE race:france 1754326272465-15 1754326272465-15
+1) 1) "1754326272465-15"
+   2) 1) "rider"
+      2) "Vingegaard"
+      3) "speed"
+      4) "22.4"
+      5) "position"
+      6) "16"
+      7) "location_id"
+      8) "2"
+```
+However if you use `XREAD` you'll obtain the next Id based on given Id
+```
+127.0.0.1:6379> XREAD COUNT 1 STREAMS race:france 1754326272465-15
+1) 1) "race:france"
+   2) 1) 1) "1754326272465-16"
+         2) 1) "rider"
+            2) "Lopez"
+            3) "speed"
+            4) "26.6"
+            5) "position"
+            6) "17"
+            7) "location_id"
+            8) "1"
+```
+
+
+| Use Case                                      | Use `XREAD`?               | Use `XRANGE`? | Why?                                                          |
+| --------------------------------------------- | -------------------------- | ------------- | ------------------------------------------------------------- |
+| **Live data / consumer** (tailing, real-time) | ✅ Yes                      | ❌ No          | `XREAD` is optimized for reading new entries (like `tail -f`) |
+| **Backfill / historical scan**                | ❌ No                       | ✅ Yes         | `XRANGE` gives full control over range, ID inclusiveness      |
+| **Exact ID read**                             | ❌ No                       | ✅ Yes         | Only `XRANGE` allows precise ID match                         |
+| **Blocking until new data**                   | ✅ Yes (`BLOCK`)            | ❌ No          | `XREAD` supports `BLOCK` to wait for new entries              |
+| **Iterative pagination / batch scan**         | ❌ Not ideal                | ✅ Yes         | `XRANGE` + ID offset is perfect for paginated scans           |
+| **Consumer groups / scalable processing**     | ❌ Use `XREADGROUP` instead | ❌ No          | `XREADGROUP` required for reliable queue-style consumption    |
+
+## Java code
+```java
+@RestController
+@RequestMapping("/api/race")
+@RequiredArgsConstructor
+class XRangeRaceStreamController {
+
+	private final StringRedisTemplate redisTemplate;
+	
+	@GetMapping("/get")
+	public MapRecord<String, Object, Object> readStream (
+			@RequestParam(defaultValue = "race:france") String streamKey,
+			@RequestParam(defaultValue = "0") String entryId
+	) {
+		StreamOperations<String, Object, Object> streamOperations = redisTemplate.opsForStream();
+		Range<String> range = Range.closed(entryId, entryId);
+		var results = streamOperations.range(streamKey, range, Limit.limit().count(1));
+		return results.isEmpty() ? null : results.get(0);
+	}
+}
+
+```
+
+## Test with Curl 
+```
+curl "http://localhost:8080/api/race/get?streamKey=race:france&entryId=1754326272465-15" | jq
+{
+  "stream": "race:france",
+  "value": {
+    "rider": "Vingegaard",
+    "speed": "22.4",
+    "position": "16",
+    "location_id": "2"
+  },
+  "id": {
+    "value": "1754326272465-15",
+    "timestamp": 1754326272465,
+    "sequence": 15
+  },
+  "requiredStream": "race:france"
+}
+```
